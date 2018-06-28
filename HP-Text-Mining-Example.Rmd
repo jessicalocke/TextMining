@@ -8,12 +8,12 @@ output: word_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-# Install harrypotter package (all 7 texts of HP)
-# if (packageVersion("devtools") < 1.6) {
-#   install.packages("devtools")
-# }
-# 
-# devtools::install_github("bradleyboehmke/harrypotter")
+#Install harrypotter package (all 7 texts of HP)
+if (packageVersion("devtools") < 1.6) {
+  install.packages("devtools")
+}
+
+devtools::install_github("bradleyboehmke/harrypotter")
 
 library(tidyverse)      # data manipulation & plotting
 library(stringr)        # text cleaning and regular expressions

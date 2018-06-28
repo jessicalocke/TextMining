@@ -26,9 +26,9 @@ theme_set(theme_bw())
 
 ```{r load_data, echo = FALSE}
 
-#read 200K reviews from yelp dataset
+#read 10K reviews from yelp dataset
 infile <- "C:\\Users\\jlocke\\Documents\\Text Mining Data\\dataset\\review.json"
-review_lines <- read_lines(infile, n_max = 10000, progress = FALSE)
+review_lines <- read_lines(infile, n_max = 50000, progress = FALSE)
 
 #format json so each review is 1 row
 reviews_combined <- str_c("[", str_c(review_lines, collapse = ", "), "]")
@@ -167,6 +167,7 @@ total_words <- review_words_freq %>%
 
 review_words_freq <- left_join(review_words_freq, total_words)
 
+#term frequency by star rating
 ggplot(review_words_freq, aes(n/total, fill = stars)) +
   geom_histogram(show.legend = FALSE) +
   xlim(NA, 0.0009) +
@@ -182,11 +183,11 @@ freq_by_rank <- review_words_freq %>%
   mutate(rank = row_number(), 
          `term frequency` = n/total)
 
-freq_by_rank %>% 
-  ggplot(aes(rank, `term frequency`, color = stars)) + 
-  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
-  scale_x_log10() +
-  scale_y_log10()
+# freq_by_rank %>% 
+#   ggplot(aes(rank, `term frequency`, color = stars)) + 
+#   geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+#   scale_x_log10() +
+#   scale_y_log10()
 
 ```
 
@@ -194,19 +195,20 @@ freq_by_rank %>%
 ```{r tf_itf, echo = FALSE}
 
 review_words_freq <- review_words_freq %>%
-  bind_tf_idf(word, business_id, n)
+  bind_tf_idf(word, stars, n)
 
 review_words_freq %>%
   arrange(desc(tf_idf)) %>%
   mutate(word = factor(word, levels = rev(unique(word)))) %>% 
-  group_by(book) %>% 
-  top_n(15) %>% 
+  group_by(stars) %>% 
+  top_n(10) %>% 
   ungroup %>%
-  ggplot(aes(word, tf_idf, fill = book)) +
+  ggplot(aes(word, tf_idf, fill = stars)) +
   geom_col(show.legend = FALSE) +
   labs(x = NULL, y = "tf-idf") +
-  facet_wrap(~book, ncol = 2, scales = "free") +
-  coord_flip()
+  facet_wrap(~stars, ncol = 2, scales = "free") +
+  coord_flip() +
+  ggtitle("Most unique words by star rating")
 
 ```
 
@@ -236,6 +238,26 @@ bigrams_united %>%
   arrange(desc(n)) %>%
   top_n(20)
 
+#bigram frequencies
+bigram_tf_idf <- bigrams_united %>%
+  count(stars, bigram) %>%
+  bind_tf_idf(bigram, stars, n) %>%
+  arrange(desc(tf_idf))
+
+#graphing bigram frequencies by star rating
+bigram_tf_idf %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(bigram = factor(bigram, levels = rev(unique(bigram)))) %>% 
+  group_by(stars) %>% 
+  top_n(10) %>% 
+  ungroup %>%
+  ggplot(aes(bigram, tf_idf, fill = stars)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~stars, ncol = 2, scales = "free") +
+  coord_flip() +
+  ggtitle("Most unique bigrams by star rating")
+
 #looking at negation words
 
 #Create bigrams including stopwords
@@ -258,13 +280,13 @@ negated_words %>%
   filter(row_number() <= 10) %>%
   ungroup() %>%
   mutate(afinn_n = afinn_score * n) %>%
-  ggplot(aes(x = reorder(word2,afinn_n), y = afinn_n)) +
+  mutate(direction = ifelse(afinn_n >= 0, "positive", "negative")) %>%
+  ggplot(aes(x = reorder(word2,afinn_n), y = afinn_n, fill = factor(direction))) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~word1, scales = "free") +
   labs(y = "AFINN score * n",
        x = "Top 10 words associated with negation word") +
   coord_flip()
-
 
 
 ```
@@ -278,7 +300,7 @@ bigram_counts <- bigrams_separated %>%
 
 # filter for only relatively common combinations
 bigram_graph <- bigram_counts %>%
-  filter(n > 30) %>%
+  filter(n > 150) %>%
   graph_from_data_frame()
 
 #use ggraph to graph the bigram_graph
@@ -341,7 +363,105 @@ word_cors %>%
 
 
 ```
+#Topic modeling
 
+##Topic modeling examples using LDA
+```{r lda, echo = FALSE}
+
+#convert review_words_freq df into a document term matrix
+review_words_dtm <- review_words_freq %>%
+  #remove the columns we created for tf, idf, total
+  select(stars, word, n) %>%
+  mutate(stars = as.character(stars)) %>%
+  cast_dtm(stars, word, n)
+
+#set a seed so that the output of the model is predictable
+review_lda <- LDA(review_words_dtm, k = 2, control = list(seed = 1234))
+
+#tidying the LDA matrix
+review_topics <- tidy(review_lda, matrix = "beta")
+
+#top terms in each topic
+top_terms <- review_topics %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+#graphing the top terms
+top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+```
+
+###Word-topic probabilities
+```{r word_topic_prob, echo = FALSE}
+
+#top terms associated with each topic
+review_top_terms <- review_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+#graphing top 10 terms associated with each topic
+review_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+#finding terms with the greatest difference in beta between topics 1 and 2
+beta_spread <- review_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+
+#graphing the terms with largest difference in beta
+#largest positive beta
+beta_spread_max <- 
+  beta_spread %>%
+  top_n(10, log_ratio)
+
+#largest negative beta
+beta_spread_min <- 
+  beta_spread %>%
+  top_n(-10, log_ratio)
+
+#combine largest pos and neg together
+beta_spread_min_max <- bind_rows(beta_spread_max, beta_spread_min) %>%
+  mutate(direction = ifelse(log_ratio >= 0, "positive", "negative"))
+  
+beta_spread_min_max %>%
+  mutate(term = reorder(term, log_ratio)) %>%
+  ggplot(aes(term, log_ratio, fill = factor(direction))) +
+  geom_col(show.legend = FALSE) +
+  #facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  ggtitle("Terms with largest log2 ratio of betas (pos and neg) between topics 2/1")
+
+```
+
+###Document-topic probabilities
+```{r doc_topic_prob, echo = FALSE}
+
+#ap_documents <- tidy(ap_lda, matrix = "gamma")
+
+#from looking at the ap_documents df, can see that almost all words in doc 6 are generated from topic 2 (politics)
+#use tidy to tidy the document term matrix to see what the top terms are in document 6. 
+#we can see that they are indeed politics related
+
+# tidy(AssociatedPress) %>%
+#   filter(document == 6) %>%
+#   arrange(desc(count))
+
+```
 
 ```{r template, echo = FALSE}
 
